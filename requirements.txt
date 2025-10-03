@@ -1,0 +1,21 @@
+# Core
+opencv-python>=4.9
+PyYAML>=6.0
+numpy>=1.26
+scipy>=1.11
+pillow>=10.0
+
+# Video & audio analysis / rendering
+moviepy>=1.0.3
+librosa>=0.10.2
+scikit-image>=0.22  # for SSIM/diff on killfeed ROI
+
+# OCR (choose one; pytesseract wraps the tesseract binary installed via conda)
+pytesseract>=0.3.10
+# easyocr>=1.7.1  # (alternative to pytesseract; comment out one or the other)
+
+# Optional ML runtime if you later add a tiny weapon-icon CNN
+onnxruntime>=1.18
+
+# Dev tooling (optional, but handy)
+tqdm>=4.66

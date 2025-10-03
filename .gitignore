@@ -1,0 +1,94 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+.cache/
+.ipynb_checkpoints/
+
+# --- Envs (conda/venv) ---
+.env
+.venv/
+venv/
+env/
+*.conda
+*.lock  # if you ever export pip locks
+
+# --- Build / packaging ---
+build/
+dist/
+wheelhouse/
+pip-wheel-metadata/
+*.whl
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+*.sw?
+*~
+
+# --- Logs & runs ---
+logs/
+*.log
+runs/
+wandb/
+tensorboard/
+tb_logs/
+
+# --- Data (keep configs, ignore heavy/generated stuff) ---
+data/
+datasets/
+raw_data/
+# If you want some tracked small samples, use data/samples/ and whitelist:
+!data/samples/**
+
+# --- Videos & frames/crops (large/generated) ---
+videos/
+frames/
+crops/
+outputs/
+artifacts/
+exports/
+reports/
+tmp/
+temp/
+out/
+test.mp4
+rois/
+
+
+# --- Model files / weights / checkpoints ---
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.pb
+*.ckpt
+*.npz
+
+# --- Configs: keep canonical ROI YAMLs, ignore local overrides ---
+roi_configs/*.local.yaml
+roi_configs/*.secret.yaml
+# Ensure your main ROI config(s) stay tracked:
+!roi_configs/*.yaml
+
+# --- Secrets / creds ---
+*.env
+.env.*
+*.key
+*.pem
+*.crt
+*.credentials
