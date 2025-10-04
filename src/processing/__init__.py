@@ -1,1 +1,2 @@
 from processing.roi_cropper import ROICropper
+from processing.ocr import DeepTextDetector

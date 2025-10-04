@@ -65,9 +65,9 @@ reports/
 tmp/
 temp/
 out/
-test.mp4
+vids/
 rois/
-
+weights/
 
 # --- Model files / weights / checkpoints ---
 checkpoints/

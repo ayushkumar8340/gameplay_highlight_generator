@@ -19,3 +19,6 @@ onnxruntime>=1.18
 
 # Dev tooling (optional, but handy)
 tqdm>=4.66
+
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0
