@@ -115,15 +115,12 @@ class DeepTextDetector:
 
         bgr = sample.crop
 
-        # Path A: color-masked (red/orange) image
         proc_color, meta_color = self._preprocess_color_mask(bgr)
         digits_color, spans_color = self._easyocr_digits(proc_color)
 
-        # Path B: high-contrast grayscale fallback
         proc_gray, meta_gray = self._preprocess_gray_boost(bgr)
         digits_gray, spans_gray = self._easyocr_digits(proc_gray, force_rgb=False)
 
-        # Pick the better: prefer longer digit string, then higher mean conf
         def score(d: str, spans: List[OCRSpan]):
             if not d:
                 return (-1, 0.0)
