@@ -7,6 +7,9 @@ import yaml
 import numpy as np
 import csv
 
+
+# ---------- Data models ----------
+
 @dataclass(frozen=True)
 class ROI:
     name: str
@@ -30,6 +33,9 @@ class MultiCropSample:
     timecode: str
     crop: np.ndarray  # BGR
 
+
+# ---------- ROICropper ----------
+
 class ROICropper:
     """
     Supports YAML with:
@@ -51,30 +57,33 @@ class ROICropper:
         if not self._cap.isOpened():
             raise RuntimeError(f"Failed to open video: {self.video_path}")
 
+        # Raw frame geometry
         self.frame_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = float(self._cap.get(cv2.CAP_PROP_FPS)) or 30.0
         self.frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+        # YAML metadata and ROIs
         meta = self._load_yaml(self.yaml_path)
         self.base_w, self.base_h = meta["base_w"], meta["base_h"]
         self.fps_yaml = meta.get("fps_analysis")
-
-        # All ROIs from YAML (unscaled)
         self.rois_all: List[ROI] = meta["rois"]
 
-        # Pick single ROI for legacy APIs
+        # Select single ROI for legacy APIs
         self.roi = None
         if self.roi_name:
             self.roi = next((r for r in self.rois_all if r.name == self.roi_name), None)
             if self.roi is None:
                 raise ValueError(f"ROI named '{self.roi_name}' not found.")
         else:
-            # if legacy YAML had only one, or default to first
             self.roi = self.rois_all[0]
 
-        # Pre-compute scaled ROIs
-        self.scaled_rois_all: List[ROI] = self._scale_rois(self.rois_all, (self.base_w, self.base_h), (self.frame_w, self.frame_h))
+        # Pre-compute scaled ROIs in the raw frame space (no rotation logic)
+        self.scaled_rois_all: List[ROI] = self._scale_rois(
+            self.rois_all,
+            (self.base_w, self.base_h),
+            (self.frame_w, self.frame_h),
+        )
         self.scaled_roi: ROI = next(r for r in self.scaled_rois_all if r.name == self.roi.name)
 
     def __del__(self):
@@ -163,7 +172,7 @@ class ROICropper:
         h = int(t) // 3600
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
-    # ---------- Single-ROI iteration (existing API) ----------
+    # ---------- Single-ROI iteration (legacy API) ----------
     def iter_crops(
         self,
         every_n: int = 1,
@@ -187,6 +196,7 @@ class ROICropper:
             ret, frame = self._cap.read()
             if not ret:
                 break
+
             if (idx - start) % every_n == 0:
                 crop = frame[y:y+h, x:x+w].copy()
                 if with_meta:
@@ -195,7 +205,7 @@ class ROICropper:
                     yield crop
             idx += 1
 
-    # ---------- NEW: all-ROIs in one pass ----------
+    # ---------- All-ROIs in one pass ----------
     def iter_all_crops(
         self,
         every_n: int = 1,
@@ -222,6 +232,7 @@ class ROICropper:
             ret, frame = self._cap.read()
             if not ret:
                 break
+
             if (idx - start) % every_n == 0:
                 t = self.frame_to_seconds(idx)
                 tc = self.seconds_to_timecode(t)

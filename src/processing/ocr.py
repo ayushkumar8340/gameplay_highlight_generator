@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
 import cv2
-import pytesseract
+import re
+
+# ---- Pretrained Deep OCR (EasyOCR) ----
+# pip install easyocr torch torchvision
+try:
+    import easyocr
+except Exception:
+    easyocr = None  # clear error is raised if detect() is called
 
 
 # ---------- Project data models ----------
@@ -43,105 +50,105 @@ class OCRResult:
     meta: Dict[str, Any]
 
 
-# ---------- Config for the red-HUD Tesseract pipeline ----------
+# ---------- Config for pretrained DeepOCR (digits-only) ----------
 
 @dataclass
 class DeepOCRConfig:
-    # HSV thresholds for red/orange text (two ranges because red wraps around hue=0)
-    hsv_low1: Tuple[int, int, int] = (0, 80, 70)
-    hsv_high1: Tuple[int, int, int] = (10, 255, 255)
-    hsv_low2: Tuple[int, int, int] = (170, 80, 70)
+    # Broader orange/red coverage (HUD text is often orange-ish)
+    hsv_low1: Tuple[int, int, int] = (0, 60, 60)
+    hsv_high1: Tuple[int, int, int] = (25, 255, 255)     # up to orange
+    hsv_low2: Tuple[int, int, int] = (160, 60, 60)       # deeper reds
     hsv_high2: Tuple[int, int, int] = (180, 255, 255)
 
-    # Morphology to thicken very thin strokes after inversion
+    # Mask cleanup
+    close_ksize: Tuple[int, int] = (2, 2)
+    close_iters: int = 1
     dilate_ksize: Tuple[int, int] = (2, 2)
     dilate_iters: int = 1
 
-    # Upscale factor before OCR (thickens strokes; use 2–3 for tiny HUD text)
-    upscale: float = 3.0
+    # Optional upscale (helps tiny HUD text)
+    upscale: float = 2.0
 
-    # Tesseract options
-    tesseract_oem: int = 3           # LSTM default
-    tesseract_psm: int = 7           # single line (good for HUD ribbons)
-    whitelist: Optional[str] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ "
-    blacklist: Optional[str] = None
-    min_conf_keep: float = 40.0      # keep words with conf >= this (0..100)
+    # EasyOCR settings
+    languages: Tuple[str, ...] = ("en",)
+    gpu: bool = False                     # set True if you have CUDA
+    allowlist: str = "0123456789"         # digits only
+    text_threshold: float = 0.4
+    low_text: float = 0.3
+    link_threshold: float = 0.4
+    paragraph: bool = False
+    rotation_info: Optional[List[int]] = None  # e.g. [0, 90, 180, 270]
 
-    # If you need a custom tesseract binary path:
-    tesseract_cmd: Optional[str] = None
+    # Post-filtering
+    min_conf_keep: float = 0.35           # a bit lower helps tiny HUD
+    sort_left_to_right: bool = True
 
 
 class DeepTextDetector:
     """
-    Red/Orange HUD OCR using:
-      1) HSV dual-range red mask
-      2) Invert to black-on-white
-      3) Dilate (thicken)
-      4) Upscale (CUBIC)
-      5) Tesseract OCR (psm=7)
-
-    Exposes the same API you've used elsewhere: detect(), detect_batch(), draw_annotations().
+    Pretrained DeepOCR (EasyOCR) red-digits OCR:
+      1) HSV dual-range red/orange mask -> keep only red/orange regions
+      2) CLAHE contrast boost + optional upscale
+      3) EasyOCR.readtext with digits allowlist
+      4) Strictly keep digits; drop letters (e.g., 'eliminations')
+      5) Gray fallback path if color mask underperforms
     """
     def __init__(self, cfg: DeepOCRConfig = DeepOCRConfig()):
         self.cfg = cfg
-        if cfg.tesseract_cmd:
-            pytesseract.pytesseract.tesseract_cmd = cfg.tesseract_cmd
+        self._reader: Optional["easyocr.Reader"] = None  # lazy init
 
     # ---------- Public API ----------
 
     def detect(self, sample: MultiCropSample) -> OCRResult:
+        if easyocr is None:
+            raise RuntimeError(
+                "EasyOCR is not installed. Run `pip install easyocr torch torchvision`."
+            )
+
+        # Lazy-load the pretrained reader
+        if self._reader is None:
+            self._reader = easyocr.Reader(
+                list(self.cfg.languages),
+                gpu=self.cfg.gpu,
+                verbose=False
+            )
+
         bgr = sample.crop
-        proc, meta = self._preprocess(bgr)
 
-        # Build Tesseract config
-        cfg_parts = [f"--oem {self.cfg.tesseract_oem}", f"--psm {self.cfg.tesseract_psm}"]
-        if self.cfg.whitelist:
-            cfg_parts.append(f'-c tessedit_char_whitelist="{self.cfg.whitelist}"')
-        if self.cfg.blacklist:
-            cfg_parts.append(f'-c tessedit_char_blacklist="{self.cfg.blacklist}"')
-        cfg_str = " ".join(cfg_parts)
+        # Path A: color-masked (red/orange) image
+        proc_color, meta_color = self._preprocess_color_mask(bgr)
+        digits_color, spans_color = self._easyocr_digits(proc_color)
 
-        # 1) All-text (quick)
-        all_text = pytesseract.image_to_string(proc, config=cfg_str).strip()
+        # Path B: high-contrast grayscale fallback
+        proc_gray, meta_gray = self._preprocess_gray_boost(bgr)
+        digits_gray, spans_gray = self._easyocr_digits(proc_gray, force_rgb=False)
 
-        # 2) Word-level boxes
-        data = pytesseract.image_to_data(proc, config=cfg_str, output_type=pytesseract.Output.DICT)
+        # Pick the better: prefer longer digit string, then higher mean conf
+        def score(d: str, spans: List[OCRSpan]):
+            if not d:
+                return (-1, 0.0)
+            mean_conf = float(np.mean([s.conf for s in spans])) if spans else 0.0
+            return (len(d), mean_conf)
 
-        spans: List[OCRSpan] = []
-        n = len(data.get("text", []))
-        for i in range(n):
-            text = (data["text"][i] or "").strip()
-            conf_raw = data["conf"][i]
-            try:
-                conf = float(conf_raw)
-            except Exception:
-                conf = -1.0
-            if not text or conf < self.cfg.min_conf_keep:
-                continue
+        sc_color = score(digits_color, spans_color)
+        sc_gray  = score(digits_gray, spans_gray)
 
-            x = int(data["left"][i]); y = int(data["top"][i])
-            w = int(data["width"][i]); h = int(data["height"][i])
-            level = int(data.get("level", [5]*n)[i])
-            line_num = int(data.get("line_num", [0]*n)[i]) if "line_num" in data else 0
-            block_num = int(data.get("block_num", [0]*n)[i]) if "block_num" in data else 0
-            par_num = int(data.get("par_num", [0]*n)[i]) if "par_num" in data else 0
-
-            spans.append(OCRSpan(
-                text=text,
-                conf=conf,
-                bbox=(x, y, w, h),
-                level=level,
-                line_num=line_num,
-                block_num=block_num,
-                par_num=par_num,
-            ))
+        if sc_gray > sc_color:
+            all_text = digits_gray
+            spans = spans_gray
+            meta = meta_gray
+            meta["path"] = "gray_fallback"
+        else:
+            all_text = digits_color
+            spans = spans_color
+            meta = meta_color
+            meta["path"] = "color_mask"
 
         meta.update({
-            "backend": "Tesseract(HSV-red)",
-            "psm": self.cfg.tesseract_psm,
-            "oem": self.cfg.tesseract_oem,
+            "backend": "EasyOCR(pretrained, digits-only)",
+            "num_spans": len(spans),
+            "allowlist": self.cfg.allowlist,
             "upscale": self.cfg.upscale,
-            "dilate_iters": self.cfg.dilate_iters,
         })
 
         return OCRResult(
@@ -175,27 +182,80 @@ class DeepTextDetector:
             cv2.putText(vis, label, (x, ytxt), cv2.FONT_HERSHEY_SIMPLEX,
                         font_scale, (0, 255, 255), thickness, cv2.LINE_AA)
 
-        # small footer with meta
-        tag = result.meta.get("backend", "tess")
-        cv2.putText(vis, f"{tag}", (8, vis.shape[0]-8),
+        tag = result.meta.get("backend", "DeepOCR")
+        cv2.putText(vis, f"{tag}: {result.all_text}", (8, vis.shape[0]-8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)
-        cv2.putText(vis, f"{tag}", (8, vis.shape[0]-8),
+        cv2.putText(vis, f"{tag}: {result.all_text}", (8, vis.shape[0]-8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1, cv2.LINE_AA)
         return vis
 
-    # ---------- Internals (your method, generalized) ----------
+    # ---------- Internals ----------
 
-    def _preprocess(self, bgr: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+    def _easyocr_digits(self, bgr_or_gray: np.ndarray, force_rgb: bool = True):
+        """Run EasyOCR and return (concatenated_digits, spans)."""
+        if force_rgb:
+            rgb = cv2.cvtColor(bgr_or_gray, cv2.COLOR_BGR2RGB)
+        else:
+            if len(bgr_or_gray.shape) == 2:  # grayscale
+                rgb = bgr_or_gray
+            else:
+                rgb = cv2.cvtColor(bgr_or_gray, cv2.COLOR_BGR2RGB)
+
+        results = self._reader.readtext(
+            rgb,
+            detail=1,
+            paragraph=self.cfg.paragraph,
+            rotation_info=self.cfg.rotation_info,
+            allowlist=self.cfg.allowlist,
+            text_threshold=self.cfg.text_threshold,
+            low_text=self.cfg.low_text,
+            link_threshold=self.cfg.link_threshold,
+            mag_ratio=1.0,
+            slope_ths=0.1,
+            ycenter_ths=0.7,
+            height_ths=0.6,
+        )
+
+        spans: List[OCRSpan] = []
+        for det in results:
+            # det = [box(points), text, conf]
+            box_pts, text, conf = det
+            text = (text or "").strip()
+            # STRICT numeric cleanup
+            text_digits = "".join(ch for ch in text if ch.isdigit())
+            if not text_digits:
+                continue
+            if conf < self.cfg.min_conf_keep:
+                continue
+
+            xs = [int(p[0]) for p in box_pts]
+            ys = [int(p[1]) for p in box_pts]
+            x, y = min(xs), min(ys)
+            w, h = max(xs) - x, max(ys) - y
+
+            spans.append(OCRSpan(
+                text=text_digits,
+                conf=float(conf * 100.0),   # 0–100
+                bbox=(x, y, w, h),
+                level=5
+            ))
+
+        if self.cfg.sort_left_to_right:
+            spans.sort(key=lambda s: s.bbox[0])
+
+        # Concatenate only digits from all spans, then final guard via regex
+        all_digits = "".join(s.text for s in spans)
+        m = re.findall(r"\d+", all_digits)
+        all_digits = "".join(m) if m else ""
+
+        return all_digits, spans
+
+    def _preprocess_color_mask(self, bgr: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
         """
-        Produce a single-channel, OCR-ready image:
-          - Mask red/orange in HSV (two ranges)
-          - Invert (black text on white)
-          - Dilate to thicken strokes
-          - Upscale (cubic)
+        Keep only red/orange regions for OCR; mild denoise; optional upscale; CLAHE.
+        Returns a BGR image (masked) suitable for EasyOCR.
         """
         meta: Dict[str, Any] = {}
-
-        # 1) HSV mask for red/orange overlays
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         low1 = np.array(self.cfg.hsv_low1, dtype=np.uint8)
         high1 = np.array(self.cfg.hsv_high1, dtype=np.uint8)
@@ -206,24 +266,54 @@ class DeepTextDetector:
         m2 = cv2.inRange(hsv, low2, high2)
         mask = cv2.bitwise_or(m1, m2)
 
-        # Minor cleanup on the mask
-        k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=1)
-
-        # 2) Invert so letters are black on white (Tesseract prefers this)
-        inv = 255 - mask
-
-        # 3) Dilate to thicken thin strokes
+        if self.cfg.close_iters > 0:
+            k = cv2.getStructuringElement(cv2.MORPH_RECT, self.cfg.close_ksize)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=self.cfg.close_iters)
         if self.cfg.dilate_iters > 0:
             kd = cv2.getStructuringElement(cv2.MORPH_RECT, self.cfg.dilate_ksize)
-            inv = cv2.dilate(inv, kd, iterations=self.cfg.dilate_iters)
+            mask = cv2.dilate(mask, kd, iterations=self.cfg.dilate_iters)
 
-        # 4) Upscale
+        # Keep only red/orange pixels
+        masked = cv2.bitwise_and(bgr, bgr, mask=mask)
+
+        # Optional upscale for tiny HUD text
         if self.cfg.upscale and self.cfg.upscale != 1.0:
-            h, w = inv.shape[:2]
-            inv = cv2.resize(inv, (int(w * self.cfg.upscale), int(h * self.cfg.upscale)),
-                             interpolation=cv2.INTER_CUBIC)
+            h, w = masked.shape[:2]
+            masked = cv2.resize(
+                masked, (int(w * self.cfg.upscale), int(h * self.cfg.upscale)),
+                interpolation=cv2.INTER_CUBIC
+            )
 
-        meta["shape"] = inv.shape
-        meta["variant"] = "hsv_red_mask_invert_dilate_upscale"
-        return inv, meta
+        # Mild contrast lift (CLAHE on L channel)
+        lab = cv2.cvtColor(masked, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        lab = cv2.merge([l, a, b])
+        masked = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+        meta["shape"] = masked.shape
+        meta["variant"] = "color_mask"
+        return masked, meta
+
+    def _preprocess_gray_boost(self, bgr: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Gray fallback with gamma + CLAHE. Returns single-channel image.
+        """
+        meta: Dict[str, Any] = {}
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+
+        # gamma (0.7) brightens midtones
+        gray = np.clip((gray / 255.0) ** 0.7 * 255.0, 0, 255).astype(np.uint8)
+        # local contrast
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+
+        if self.cfg.upscale and self.cfg.upscale != 1.0:
+            h, w = gray.shape[:2]
+            gray = cv2.resize(gray, (int(w * self.cfg.upscale), int(h * self.cfg.upscale)),
+                              interpolation=cv2.INTER_CUBIC)
+
+        meta["shape"] = gray.shape
+        meta["variant"] = "gray_boost"
+        return gray, meta

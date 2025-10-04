@@ -1,51 +1,53 @@
 # --- src/tests/test_ocr.py ---
-# Preview HSV-red Tesseract OCR on a chosen ROI (e.g., "awards")
+# Pretrained DeepOCR (digits-only, red) on a chosen ROI (e.g., "kills")
 # Controls:
 #   q : quit
 #   ⎵ : pause/resume
-#   s : save current composite to runs/tess_ocr_<ROI>/
+#   s : save current composite to runs/deepocr_<ROI>/
 
-from __future__ import annotations
 from pathlib import Path
 import time
 import cv2
 import numpy as np
 
 from processing.roi_cropper import ROICropper
-from processing.ocr import DeepTextDetector, DeepOCRConfig
+from processing.ocr import DeepTextDetector, DeepOCRConfig, MultiCropSample
 
 REPO_ROOT = Path(__file__).resolve().parents[1].parent
 
 VIDEO = REPO_ROOT / "vids" / "1.MP4"
-YAML  = REPO_ROOT / "rois" / "rois.yaml"
+YAML  = REPO_ROOT / "rois" / "rois.yaml"   # change if your file name differs
 
-# Only process/show this ROI (must match the YAML 'name')
-TARGET_ROI_NAME = "kills"  # change if needed
+# Only this ROI name will be OCR'd (must match YAML 'name')
+TARGET_ROI_NAME = "kills"
 
-EVERY_N = 60
-MAX_W = 1000  # preview width cap
+EVERY_N = 60  # preview every Nth frame
+MAX_W = 1000  # optional resize for the preview window
 
-# --- HSV-red + Tesseract config (tweak as needed) ---
+# --- pretrained DeepOCR config (digits-only, red) ---
 cfg = DeepOCRConfig(
-    hsv_low1=(0, 80, 70),     # lower red
+    hsv_low1=(0, 80, 70),
     hsv_high1=(10, 255, 255),
-    hsv_low2=(170, 80, 70),   # upper red
+    hsv_low2=(170, 80, 70),
     hsv_high2=(180, 255, 255),
+    close_ksize=(2, 2),
+    close_iters=1,
     dilate_ksize=(2, 2),
-    dilate_iters=1,           # increase to 2 if strokes are too thin
-    upscale=3.0,              # 2.0–3.0 is good for small HUD text
-    tesseract_oem=3,
-    tesseract_psm=7,          # single line (HUD ribbons)
-    whitelist="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ",
-    blacklist=None,
-    min_conf_keep=40.0,
-    tesseract_cmd=None,       # set to a path if tesseract isn't on PATH
+    dilate_iters=1,
+    upscale=2.0,            # bump to 3.0 for tiny HUD text
+    languages=("en",),
+    gpu=False,
+    allowlist="0123456789",
+    text_threshold=0.4,
+    low_text=0.3,
+    link_threshold=0.4,
+    min_conf_keep=0.40,
+    sort_left_to_right=True,
 )
 
 detector = DeepTextDetector(cfg)
 
 def side_by_side(a: np.ndarray, b: np.ndarray, max_w: int) -> np.ndarray:
-    """Hstack raw and annotated views and scale down if too wide."""
     h = min(a.shape[0], b.shape[0])
     def rh(img):
         s = h / img.shape[0]
@@ -56,58 +58,55 @@ def side_by_side(a: np.ndarray, b: np.ndarray, max_w: int) -> np.ndarray:
         cat = cv2.resize(cat, (int(cat.shape[1]*s), int(cat.shape[0]*s)), interpolation=cv2.INTER_AREA)
     return cat
 
-def main():
-    assert VIDEO.exists(), f"Video not found: {VIDEO}"
-    assert YAML.exists(), f"ROI YAML not found: {YAML}"
+# init
+assert VIDEO.exists(), f"Video not found: {VIDEO}"
+assert YAML.exists(), f"ROI YAML not found: {YAML}"
 
-    cropper = ROICropper(str(VIDEO), str(YAML))
-    cv2.namedWindow("HSV-Red Tesseract OCR", cv2.WINDOW_NORMAL)
-    paused = False
+cropper = ROICropper(str(VIDEO), str(YAML))
 
-    print("Starting OCR preview... (q quit, space pause, s save)")
+cv2.namedWindow("OCR Preview", cv2.WINDOW_NORMAL)
+paused = False
 
-    for batch in cropper.iter_all_crops(every_n=EVERY_N):
-        for s in batch:
-            # Only process frames whose ROI name matches TARGET_ROI_NAME
-            if s.roi_name.lower() != TARGET_ROI_NAME.lower():
-                continue
+print("Starting OCR preview... (q quit, space pause, s save)")
 
-            raw = s.crop.copy()
-            result = detector.detect(s)
-            ann = detector.draw_annotations(s, result, font_scale=0.55, thickness=1)
+for batch in cropper.iter_all_crops(every_n=EVERY_N):
+    for s in batch:
+        if s.roi_name != TARGET_ROI_NAME:
+            continue
 
-            timecode = getattr(s, "timecode", None) or cropper.seconds_to_timecode(s.t_sec)
-            avg_conf = float(np.mean([sp.conf for sp in result.spans])) if result.spans else 0.0
-            header = f"{s.roi_name}  t={timecode}  frame={s.frame_idx}  conf~{avg_conf:.1f}"
-            text_line = (result.all_text[:80] + "…") if len(result.all_text) > 80 else result.all_text
+        # use crop directly (no rotation)
+        sample = MultiCropSample(
+            roi_name=s.roi_name, frame_idx=s.frame_idx, t_sec=s.t_sec, timecode=s.timecode, crop=s.crop.copy()
+        )
 
-            viz = side_by_side(raw, ann, MAX_W)
-            # Overlay header + text
-            y0 = 24
-            # cv2.rectangle(viz, (0, 0), (viz.shape[1], y0 + 28), (0, 0, 0), -1)
-            # cv2.putText(viz, header, (8, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-            # cv2.putText(viz, f"text: {text_line}", (8, y0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 255, 200), 1, cv2.LINE_AA)
+        t0 = time.time()
+        result = detector.detect(sample)
+        ms = (time.time() - t0) * 1000.0
 
-            cv2.imshow("HSV-Red Tesseract OCR", viz)
+        ann = detector.draw_annotations(sample, result, font_scale=0.55, thickness=1)
+        viz = side_by_side(sample.crop, ann, MAX_W)
 
-            key = cv2.waitKey(1 if not paused else 30) & 0xFF
-            if key == ord('q'):
-                cv2.destroyAllWindows()
-                return
-            elif key == ord(' '):
-                paused = not paused
-            elif key == ord('s'):
-                out_dir = REPO_ROOT / f"runs/tess_ocr_{TARGET_ROI_NAME.lower()}"
-                out_dir.mkdir(parents=True, exist_ok=True)
-                safe_tc = timecode.replace(":", "-")
-                out_path = out_dir / f"{s.frame_idx:08d}_{s.roi_name}_{safe_tc}.jpg"
-                # cv2.imwrite(str(out_path), viz)
-                print(f"Saved: {out_path}")
+        # label line (printed)
+        avg_conf = float(np.mean([sp.conf for sp in result.spans])) if result.spans else 0.0
+        tc = s.timecode
+        print(f"{s.frame_idx:6d} {tc}  {s.roi_name:<12}  '{result.all_text}'  ~{avg_conf:4.1f}%  {ms:5.1f}ms")
 
-            # Slow slightly for readability (adjust/remove as needed)
-            time.sleep(0.10)
+        cv2.imshow("OCR Preview", viz)
 
-    cv2.destroyAllWindows()
+        key = cv2.waitKey(1 if not paused else 30) & 0xFF
+        if key == ord('q'):
+            cv2.destroyAllWindows()
+            raise SystemExit
+        elif key == ord(' '):
+            paused = not paused
+        elif key == ord('s'):
+            out_dir = REPO_ROOT / f"runs/deepocr_{TARGET_ROI_NAME.lower()}"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            safe_tc = tc.replace(":", "-")
+            out_path = out_dir / f"{s.frame_idx:08d}_{s.roi_name}_{safe_tc}.jpg"
+            cv2.imwrite(str(out_path), viz)
+            print(f"Saved: {out_path}")
 
-if __name__ == "__main__":
-    main()
+        time.sleep(0.10)
+
+cv2.destroyAllWindows()
