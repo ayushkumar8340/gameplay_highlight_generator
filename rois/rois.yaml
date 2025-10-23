@@ -1,0 +1,19 @@
+version: 1.0.0
+base_width: 1920
+base_height: 888
+areas:
+- name: health
+  x: 759
+  y: 845
+  w: 403
+  h: 13
+- name: awards
+  x: 871
+  y: 249
+  w: 179
+  h: 37
+- name: kills
+  x: 875
+  y: 658
+  w: 33
+  h: 36

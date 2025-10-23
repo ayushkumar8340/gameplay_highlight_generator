@@ -6,6 +6,9 @@ import cv2
 import yaml
 import numpy as np
 import csv
+from dataclasses import dataclass
+from typing import Union
+
 
 
 # ---------- Data models ----------
@@ -32,6 +35,15 @@ class MultiCropSample:
     t_sec: float
     timecode: str
     crop: np.ndarray  # BGR
+
+
+@dataclass(frozen=True)
+class FullFrameSample:
+    """The full original frame at a specific time."""
+    frame_idx: int
+    t_sec: float
+    timecode: str
+    frame: np.ndarray  # BGR
 
 
 # ---------- ROICropper ----------
@@ -314,3 +326,103 @@ class ROICropper:
                 wcsv.writerows(rows)
 
         return total_written
+
+        # ---------- Time parsing ----------
+    @staticmethod
+    def timecode_to_seconds(tc: str) -> float:
+        """
+        Parse 'HH:MM:SS.mmm' into seconds (float).
+        Accepts 'MM:SS.mmm' or 'SS.mmm' as well.
+        """
+        tc = tc.strip()
+        if not tc:
+            raise ValueError("Empty timecode.")
+        parts = tc.split(":")
+        if len(parts) == 3:
+            h, m, s = parts
+        elif len(parts) == 2:
+            h, m, s = "0", parts[0], parts[1]
+        elif len(parts) == 1:
+            h, m, s = "0", "0", parts[0]
+        else:
+            raise ValueError(f"Invalid timecode format: {tc}")
+
+        # seconds may contain milliseconds 'SS.mmm'
+        if "." in s:
+            sec_str, ms_str = s.split(".", 1)
+            sec = int(sec_str)
+            ms = int((ms_str + "000")[:3])  # pad/truncate to 3 digits
+        else:
+            sec = int(s)
+            ms = 0
+
+        hours = int(h)
+        mins = int(m)
+        total = hours * 3600 + mins * 60 + sec + ms / 1000.0
+        return float(total)
+
+    # ---------- Full-frame getters ----------
+    def get_original_frame(self, time: Union[str, float], nearest: bool = True) -> FullFrameSample:
+        """
+        Return the original full frame at a given time.
+
+        Args:
+            time: Either a timecode string like 'HH:MM:SS.mmm' (same format as ROI outputs)
+                  or a float seconds value.
+            nearest: If True, rounds to nearest frame. If False, floors to earlier frame.
+
+        Returns:
+            FullFrameSample with frame (BGR), frame_idx, t_sec, and timecode.
+        """
+        # Convert input to seconds
+        if isinstance(time, str):
+            t_sec = self.timecode_to_seconds(time)
+        elif isinstance(time, (int, float)):
+            t_sec = float(time)
+        else:
+            raise TypeError("time must be a timecode string or a float (seconds).")
+
+        if t_sec < 0:
+            t_sec = 0.0
+
+        # Map to frame index
+        raw_idx = t_sec * self.fps
+        frame_idx = int(round(raw_idx)) if nearest else int(np.floor(raw_idx))
+        frame_idx = max(0, min(frame_idx, self.frame_count - 1))
+
+        # Seek and read
+        self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = self._cap.read()
+        if not ret or frame is None:
+            raise RuntimeError(f"Failed to read frame at index {frame_idx}")
+
+        # Compute precise timestamp for the frame actually read
+        t_exact = self.frame_to_seconds(frame_idx)
+        tc_exact = self.seconds_to_timecode(t_exact)
+
+        return FullFrameSample(
+            frame_idx=frame_idx,
+            t_sec=t_exact,
+            timecode=tc_exact,
+            frame=frame.copy(),
+        )
+
+    def get_original_frame_by_index(self, frame_idx: int) -> FullFrameSample:
+        """
+        Convenience: fetch by absolute frame index.
+        """
+        if frame_idx < 0 or frame_idx >= self.frame_count:
+            raise IndexError(f"frame_idx out of range [0, {self.frame_count-1}]")
+        self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = self._cap.read()
+        if not ret or frame is None:
+            raise RuntimeError(f"Failed to read frame at index {frame_idx}")
+        t_exact = self.frame_to_seconds(frame_idx)
+        tc_exact = self.seconds_to_timecode(t_exact)
+        return FullFrameSample(
+            frame_idx=frame_idx,
+            t_sec=t_exact,
+            timecode=tc_exact,
+            frame=frame.copy(),
+        )
+
