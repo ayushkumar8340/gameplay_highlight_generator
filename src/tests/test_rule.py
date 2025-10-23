@@ -1,6 +1,7 @@
 # --- src/tests/test_rules_pipeline.py ---
 from pathlib import Path
 import cv2
+from tqdm import tqdm  # <-- for progress bar
 
 from processing.roi_cropper import ROICropper
 from processing.ocr import DeepTextDetector, DeepOCRConfig, MultiCropSample
@@ -54,13 +55,21 @@ assert VIDEO.exists(), f"Video not found: {VIDEO}"
 assert YAML.exists(),  f"ROI YAML not found: {YAML}"
 
 cropper = ROICropper(str(VIDEO), str(YAML))
+total_frames = cropper.frame_count
 
 if PREVIEW:
     cv2.namedWindow("FRAME", cv2.WINDOW_NORMAL)
 
 print("Running rules pipeline... (q to quit preview, if enabled)")
 
+# --- progress bar setup ---
+num_samples = total_frames // EVERY_N if EVERY_N > 0 else total_frames
+progress = tqdm(total=num_samples, desc="Processing frames", unit="batch")
+
+# --- main loop ---
 for batch in cropper.iter_all_crops(every_n=EVERY_N):
+    progress.update(1)
+
     frame_idx = None
     t_sec = None
     timecode = None
@@ -132,7 +141,7 @@ for batch in cropper.iter_all_crops(every_n=EVERY_N):
             if key == ord('q'):
                 break
 
-        # print console summary of detected events
+        # --- console log of detected events ---
         for ev in events:
             if ev.type == "kill_while_low_health":
                 print(f"[{ev.timecode}] --- LOW HEALTH KILLS EVENT ---")
@@ -141,5 +150,6 @@ for batch in cropper.iter_all_crops(every_n=EVERY_N):
             elif ev.type == "award_word_detected":
                 print(f"[{ev.timecode}] --- EVENT AWARDS ---")
 
+progress.close()
 cv2.destroyAllWindows()
 print("Done.")
