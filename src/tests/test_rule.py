@@ -1,7 +1,6 @@
-# --- src/tests/test_rules_pipeline.py ---
 from pathlib import Path
 import cv2
-from tqdm import tqdm  # <-- for progress bar
+from tqdm import tqdm  
 
 from processing.roi_cropper import ROICropper
 from processing.ocr import DeepTextDetector, DeepOCRConfig, MultiCropSample
