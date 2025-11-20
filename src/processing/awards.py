@@ -1,4 +1,4 @@
-# src/processing/ocr_white_text.py
+
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any, Optional
@@ -9,8 +9,7 @@ import re
 # Reuse your data models
 from .ocr import MultiCropSample, OCRSpan, OCRResult
 
-# ---- Pretrained Deep OCR (EasyOCR) ----
-# pip install easyocr torch torchvision
+
 try:
     import easyocr
 except Exception:

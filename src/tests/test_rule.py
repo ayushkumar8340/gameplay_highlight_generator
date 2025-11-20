@@ -7,19 +7,35 @@ from processing.ocr import DeepTextDetector, DeepOCRConfig, MultiCropSample
 from processing.health_bar import HealthBarColorAlertDetector
 from processing.awards import WhiteHudTextDetector, WhiteTextOCRConfig
 from processing.rules import HUDRulesEngine, RulesConfig
+from processing.caption_generator import ChatGPTImageUploader
+from processing.caption_gen import TTSGenerator
+from processing.editing_module import HighlightVideoCreator
 
 REPO_ROOT = Path(__file__).resolve().parents[1].parent
+
+EVENT_IMG_DIR = REPO_ROOT / "saved"
+EVENT_IMG_DIR.mkdir(parents=True, exist_ok=True)
 
 VIDEO = REPO_ROOT / "vids" / "1.MP4"
 YAML  = REPO_ROOT / "rois" / "rois.yaml"
 
-# ROI names (must match YAML)
+COMM_PATH = REPO_ROOT / "saved" / "gameplay_commentary.yaml"
+OUT_PATH = REPO_ROOT / "highlights_output.mp4"
+AUDIO_DIR = REPO_ROOT / "generated_voice"
+
 KILLS_ROI_NAME  = "kills"
 HEALTH_ROI_NAME = "health"
 TEXT_ROI_NAME   = "awards"
 
+BUFFER_L_SECONDS = 4
+BUFFER_R_SECONDS = 1
+
+BUFFER = BUFFER_L_SECONDS + BUFFER_R_SECONDS
+
 EVERY_N = 60
 PREVIEW = True  # set True if you want to see frames when events occur
+
+timestamps = []
 
 # --- detectors ---
 ocr_cfg = DeepOCRConfig(
@@ -41,7 +57,6 @@ ocr  = DeepTextDetector(ocr_cfg)
 hdet = HealthBarColorAlertDetector()
 hud  = WhiteHudTextDetector(hud_cfg)
 
-# --- rules engine ---
 rules = HUDRulesEngine(RulesConfig(
     max_kill_jump=3,
     min_conf_accept=0.45,
@@ -49,7 +64,6 @@ rules = HUDRulesEngine(RulesConfig(
     award_words=("streak", "treak", "armor", "armor breaker"),
 ))
 
-# --- pipeline ---
 assert VIDEO.exists(), f"Video not found: {VIDEO}"
 assert YAML.exists(),  f"ROI YAML not found: {YAML}"
 
@@ -65,6 +79,17 @@ print("Running rules pipeline... (q to quit preview, if enabled)")
 num_samples = total_frames // EVERY_N if EVERY_N > 0 else total_frames
 progress = tqdm(total=num_samples, desc="Processing frames", unit="batch")
 
+
+count = 0
+
+
+def checkDiff(prev_ts: str, curr_ts: str) -> bool:
+    if(abs(HighlightVideoCreator._to_seconds(prev_ts) - abs(HighlightVideoCreator._to_seconds(curr_ts))) < BUFFER):
+        return False
+    else:
+        return True
+
+prev_timestep = "0:00"
 # --- main loop ---
 for batch in cropper.iter_all_crops(every_n=EVERY_N):
     progress.update(1)
@@ -136,19 +161,66 @@ for batch in cropper.iter_all_crops(every_n=EVERY_N):
                 y += 32
 
             cv2.imshow("FRAME", frame_vis)
+            out_path = EVENT_IMG_DIR / f"{count}_img.png"
+            cv2.imwrite(str(out_path),frame_vis)
+            count=count+1
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
-
+        
+        
         # --- console log of detected events ---
         for ev in events:
             if ev.type == "kill_while_low_health":
-                print(f"[{ev.timecode}] --- LOW HEALTH KILLS EVENT ---")
+                if checkDiff(prev_timestep , ev.timecode):
+                    timestamps.append(ev.timecode)
+                    print(f"[{ev.timecode}] --- LOW HEALTH KILLS EVENT ---")
+                    prev_timestep = ev.timecode
             elif ev.type == "false_kill_while_low_health":
-                print(f"[{ev.timecode}] --- LOW HEALTH KILLS EVENT ---")
+                if checkDiff(prev_timestep , ev.timecode):
+                    prev_timestep = ev.timecode
+                    timestamps.append(ev.timecode)
+                    print(f"[{ev.timecode}] --- LOW HEALTH KILLS EVENT ---")
+                    prev_timestep = ev.timecode
             elif ev.type == "award_word_detected":
-                print(f"[{ev.timecode}] --- EVENT AWARDS ---")
+                if checkDiff(prev_timestep , ev.timecode):
+                    prev_timestep = ev.timecode
+                    timestamps.append(ev.timecode)
+                    print(f"[{ev.timecode}] --- EVENT AWARDS ---")
+                    prev_timestep = ev.timecode
 
+
+
+print("processing done now generating captions")
 progress.close()
-cv2.destroyAllWindows()
+if PREVIEW:
+    cv2.destroyAllWindows()
+
+# RUN CHATGPT To Get Captions
+
+# uploader = ChatGPTImageUploader(EVENT_IMG_DIR)
+# uploader.run()
+
+input("Press enter after you have copied the yaml to saved folder...")
+
 print("Done.")
+
+# Generate Audio
+tts = TTSGenerator(COMM_PATH)
+tts.generate()
+
+## Merge video 
+
+vid_creator = HighlightVideoCreator(
+    video_path=VIDEO,
+    timestamps=timestamps,
+    audio_dir=AUDIO_DIR,
+    buffer_l_seconds=BUFFER_L_SECONDS,
+    buffer_r_seconds=BUFFER_R_SECONDS,
+    output_path=OUT_PATH,
+)
+
+vid_creator.create()
+
+
+

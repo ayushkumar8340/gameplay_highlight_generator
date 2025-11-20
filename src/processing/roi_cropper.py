@@ -104,6 +104,9 @@ class ROICropper:
                 self._cap.release()
         except Exception:
             pass
+    
+    def _getParsedData(self) -> List[ROI]:
+        return self.rois_all
 
     # ---------- YAML ----------
     @staticmethod

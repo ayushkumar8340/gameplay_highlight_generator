@@ -24,7 +24,7 @@ class RulesConfig:
     reset_if_zero_after_s: float = 30.0
 
     # award words (case-insensitive exact match)
-    award_words: tuple = ("streak", "treak", "armor", "armor breaker")
+    award_words: tuple = ("streak", "treak", "armor", "armor breaker", "elemin", "eleminator","ele","dominator","dom","do")
 
 
 class HUDRulesEngine:
@@ -125,7 +125,6 @@ class HUDRulesEngine:
                 },
             ))
 
-        # ----- Award word detection (exact, case-insensitive) -----
         txt = (awards_text or "").strip().lower()
         if txt in self.cfg.award_words:
             events.append(RuleEvent(

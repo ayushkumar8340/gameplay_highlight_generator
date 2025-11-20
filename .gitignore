@@ -91,3 +91,6 @@ roi_configs/*.secret.yaml
 *.pem
 *.crt
 *.credentials
+
+generated_voice/
+

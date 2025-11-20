@@ -16,11 +16,13 @@ class ChatGPTImageUploader:
         response_wait: float = 4.0,
         prompt_text: str = (
             "assume to be a commentator and give a short 3-4 word commentary "
-            "for the gameplay screenshot and make sure to be energetic and make a donwloadable "
-            "yaml file with only the commentary output and image name."
+            "for the gameplay screenshot and make sure to be energetic and make a downloadable "
+            "yaml file with only the commentary output and image name. Name the yaml file gameplay_commentary.yaml. the format should be like this: "
+            "- image: <img_name> "
+            "commentary: <commentary string type>"
         ),
     ):
-        self.images_folder = str(Path(images_folder).expanduser().resolve())
+        self.images_folder = str(images_folder)
         self.chatgpt_url = chatgpt_url
         self.chrome_window_title = chrome_window_title
         self.action_delay = action_delay
@@ -71,7 +73,7 @@ class ChatGPTImageUploader:
         pyautogui.press("enter")
         pyautogui.hotkey("ctrl", "a")
 
-        # Navigate dialog controls; keep as-is to match your environment
+        
         for _ in range(5):
             pyautogui.press("tab")
 
