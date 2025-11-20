@@ -9,10 +9,6 @@ import csv
 from dataclasses import dataclass
 from typing import Union
 
-
-
-# ---------- Data models ----------
-
 @dataclass(frozen=True)
 class ROI:
     name: str
@@ -29,7 +25,6 @@ class CropSample:
 
 @dataclass(frozen=True)
 class MultiCropSample:
-    """One cropped sample for a specific ROI/class."""
     roi_name: str
     frame_idx: int
     t_sec: float
@@ -39,22 +34,12 @@ class MultiCropSample:
 
 @dataclass(frozen=True)
 class FullFrameSample:
-    """The full original frame at a specific time."""
     frame_idx: int
     t_sec: float
     timecode: str
     frame: np.ndarray  # BGR
 
-
-# ---------- ROICropper ----------
-
 class ROICropper:
-    """
-    Supports YAML with:
-      version, created_utc, base_width/base_height, base_resolution: [W,H], fps_analysis, areas: [{name,x,y,w,h}, ...]
-    Backward compatible with legacy: base_resolution:{width,height}, roi:{...}
-    """
-
     def __init__(self, video_path: str, yaml_path: str, roi_name: Optional[str] = None):
         self.video_path = video_path
         self.yaml_path = yaml_path
@@ -69,19 +54,16 @@ class ROICropper:
         if not self._cap.isOpened():
             raise RuntimeError(f"Failed to open video: {self.video_path}")
 
-        # Raw frame geometry
         self.frame_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = float(self._cap.get(cv2.CAP_PROP_FPS)) or 30.0
         self.frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # YAML metadata and ROIs
         meta = self._load_yaml(self.yaml_path)
         self.base_w, self.base_h = meta["base_w"], meta["base_h"]
         self.fps_yaml = meta.get("fps_analysis")
         self.rois_all: List[ROI] = meta["rois"]
 
-        # Select single ROI for legacy APIs
         self.roi = None
         if self.roi_name:
             self.roi = next((r for r in self.rois_all if r.name == self.roi_name), None)
@@ -90,7 +72,6 @@ class ROICropper:
         else:
             self.roi = self.rois_all[0]
 
-        # Pre-compute scaled ROIs in the raw frame space (no rotation logic)
         self.scaled_rois_all: List[ROI] = self._scale_rois(
             self.rois_all,
             (self.base_w, self.base_h),
@@ -108,13 +89,11 @@ class ROICropper:
     def _getParsedData(self) -> List[ROI]:
         return self.rois_all
 
-    # ---------- YAML ----------
     @staticmethod
     def _load_yaml(path: str) -> Dict[str, Any]:
         with open(path, "r") as f:
             data = yaml.safe_load(f)
 
-        # Base resolution
         base_w = data.get("base_width")
         base_h = data.get("base_height")
 
@@ -132,7 +111,6 @@ class ROICropper:
         if base_w <= 0 or base_h <= 0:
             raise ValueError("Base resolution must be positive.")
 
-        # ROIs
         rois: List[ROI] = []
         if "areas" in data and isinstance(data["areas"], list) and data["areas"]:
             for a in data["areas"]:
@@ -154,7 +132,6 @@ class ROICropper:
             out["fps_analysis"] = data["fps_analysis"]
         return out
 
-    # ---------- Scaling ----------
     @staticmethod
     def _scale_rois(rois: List[ROI], base_size: Tuple[int, int], frame_size: Tuple[int, int]) -> List[ROI]:
         base_w, base_h = base_size
@@ -175,7 +152,6 @@ class ROICropper:
             out.append(ROI(name=r.name, x=x, y=y, w=w, h=h))
         return out
 
-    # ---------- Time helpers ----------
     def frame_to_seconds(self, frame_idx: int) -> float:
         return frame_idx / self.fps
 
@@ -187,7 +163,6 @@ class ROICropper:
         h = int(t) // 3600
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
-    # ---------- Single-ROI iteration (legacy API) ----------
     def iter_crops(
         self,
         every_n: int = 1,
@@ -220,17 +195,12 @@ class ROICropper:
                     yield crop
             idx += 1
 
-    # ---------- All-ROIs in one pass ----------
     def iter_all_crops(
         self,
         every_n: int = 1,
         start_frame: int = 0,
         end_frame: Optional[int] = None,
     ) -> Generator[List[MultiCropSample], None, None]:
-        """
-        Yields a list of MultiCropSample (one per ROI) for each sampled frame.
-        Each element has: roi_name, frame_idx, t_sec, timecode, crop (BGR).
-        """
         if every_n <= 0:
             raise ValueError("every_n must be >= 1")
         total = self.frame_count
@@ -265,9 +235,6 @@ class ROICropper:
         end_frame: Optional[int] = None,
         limit: Optional[int] = None,
     ) -> List[MultiCropSample]:
-        """
-        Convenience: return a flat list of MultiCropSample for all ROIs.
-        """
         out: List[MultiCropSample] = []
         for row in self.iter_all_crops(every_n=every_n, start_frame=start_frame, end_frame=end_frame):
             out.extend(row)
@@ -286,12 +253,7 @@ class ROICropper:
         write_csv: bool = True,
         csv_name: str = "all_crops_manifest.csv",
     ) -> int:
-        """
-        Save every ROI's crop for every sampled frame.
-        Layout:
-          output_root/<class>/<name>_f000123.png  (if class_subdirs=True)
-        Returns total images written and writes a manifest CSV.
-        """
+
         total_written = 0
         rows = []
         if class_subdirs:
@@ -330,13 +292,10 @@ class ROICropper:
 
         return total_written
 
-        # ---------- Time parsing ----------
+
     @staticmethod
     def timecode_to_seconds(tc: str) -> float:
-        """
-        Parse 'HH:MM:SS.mmm' into seconds (float).
-        Accepts 'MM:SS.mmm' or 'SS.mmm' as well.
-        """
+
         tc = tc.strip()
         if not tc:
             raise ValueError("Empty timecode.")
@@ -350,11 +309,11 @@ class ROICropper:
         else:
             raise ValueError(f"Invalid timecode format: {tc}")
 
-        # seconds may contain milliseconds 'SS.mmm'
+        
         if "." in s:
             sec_str, ms_str = s.split(".", 1)
             sec = int(sec_str)
-            ms = int((ms_str + "000")[:3])  # pad/truncate to 3 digits
+            ms = int((ms_str + "000")[:3])  
         else:
             sec = int(s)
             ms = 0
@@ -364,20 +323,8 @@ class ROICropper:
         total = hours * 3600 + mins * 60 + sec + ms / 1000.0
         return float(total)
 
-    # ---------- Full-frame getters ----------
     def get_original_frame(self, time: Union[str, float], nearest: bool = True) -> FullFrameSample:
-        """
-        Return the original full frame at a given time.
 
-        Args:
-            time: Either a timecode string like 'HH:MM:SS.mmm' (same format as ROI outputs)
-                  or a float seconds value.
-            nearest: If True, rounds to nearest frame. If False, floors to earlier frame.
-
-        Returns:
-            FullFrameSample with frame (BGR), frame_idx, t_sec, and timecode.
-        """
-        # Convert input to seconds
         if isinstance(time, str):
             t_sec = self.timecode_to_seconds(time)
         elif isinstance(time, (int, float)):
@@ -411,9 +358,7 @@ class ROICropper:
         )
 
     def get_original_frame_by_index(self, frame_idx: int) -> FullFrameSample:
-        """
-        Convenience: fetch by absolute frame index.
-        """
+
         if frame_idx < 0 or frame_idx >= self.frame_count:
             raise IndexError(f"frame_idx out of range [0, {self.frame_count-1}]")
         self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)

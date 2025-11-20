@@ -13,19 +13,10 @@ from .ocr import MultiCropSample, OCRSpan, OCRResult
 try:
     import easyocr
 except Exception:
-    easyocr = None  # clear error is raised if detect() is called
-
-
-# ---------- Config for WHITE HUD text (letters/digits) ----------
+    easyocr = None  
 
 @dataclass
 class WhiteTextOCRConfig:
-    """
-    Config for white-text HUD OCR.
-    The text is white; background can vary. We therefore emphasize luminance,
-    do CLAHE, adaptive thresholds (both normal and inverted), and run multi-scale OCR.
-    """
-    # EasyOCR
     languages: Tuple[str, ...] = ("en",)
     gpu: bool = False
     # Letters by default; you can append digits if your HUD mixes both
@@ -36,45 +27,27 @@ class WhiteTextOCRConfig:
     paragraph: bool = False
     rotation_info: Optional[List[int]] = None
 
-    # Keep spans with at least this confidence (0–1)
     min_conf_keep: float = 0.40
     sort_left_to_right: bool = True
 
-    # Multi-scale OCR helps tiny fonts
     scales: Tuple[float, ...] = (1.0, 1.4, 1.8, 2.2)
 
-    # Adaptive threshold params for binary candidates
-    adaptive_block: int = 31   # must be odd
+    adaptive_block: int = 31  
     adaptive_C: int = -10
 
-    # Morphology to clean speckles
     open_ksize: Tuple[int, int] = (2, 2)
     open_iters: int = 1
 
-    # Optional upscaling before building candidates (helps very small ROIs)
     pre_upscale: float = 1.0
 
-    # Final text post-filter (keeps A–Z, a–z, 0–9 and spaces/hyphen by default)
     keep_pattern: str = r"[A-Za-z0-9 -]+"
 
 
 class WhiteHudTextDetector:
-    """
-    Pretrained DeepOCR (EasyOCR) for WHITE HUD text:
-      1) Luminance boost (CLAHE) + optional pre-upscale
-      2) Build multiple grayscale candidates:
-         - raw gray
-         - adaptive binary (white glyphs on dark)
-         - inverted binary (white glyphs on bright)
-      3) Run EasyOCR across a small scale pyramid
-      4) Keep spans that match allowlist and min_conf; merge to `all_text`
-    """
     def __init__(self, cfg: WhiteTextOCRConfig = WhiteTextOCRConfig()):
         self.cfg = cfg
-        self._reader: Optional["easyocr.Reader"] = None  # lazy init
+        self._reader: Optional["easyocr.Reader"] = None 
         self._keep_re = re.compile(self.cfg.keep_pattern)
-
-    # ---------- Public API ----------
 
     def detect(self, sample: MultiCropSample) -> OCRResult:
         if easyocr is None:
@@ -108,7 +81,6 @@ class WhiteHudTextDetector:
                     mean_conf = float(np.mean([sp.conf for sp in spans])) if spans else 0.0
                     score = (len(all_text), mean_conf)
                     if score > best_score:
-                        # Reproject boxes back to *candidate* (no need to undo scale as we drew on ROI space)
                         if abs(s - 1.0) > 1e-3:
                             inv = 1.0 / s
                             spans = [self._scale_span(sp, inv) for sp in spans]
@@ -162,7 +134,6 @@ class WhiteHudTextDetector:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 255, 200), 1, cv2.LINE_AA)
         return vis
 
-    # ---------- Internals ----------
 
     def _merge_text(self, spans: List[OCRSpan]) -> str:
         if self.cfg.sort_left_to_right:
@@ -185,13 +156,11 @@ class WhiteHudTextDetector:
         return cv2.resize(im, (int(w * s), int(h * s)), interpolation=cv2.INTER_CUBIC)
 
     def _build_candidates(self, bgr: np.ndarray) -> Tuple[List[np.ndarray], List[str]]:
-        # Optional pre-upscale
         if self.cfg.pre_upscale and self.cfg.pre_upscale != 1.0:
             h, w = bgr.shape[:2]
             bgr = cv2.resize(bgr, (int(w * self.cfg.pre_upscale), int(h * self.cfg.pre_upscale)),
                              interpolation=cv2.INTER_CUBIC)
 
-        # Luminance / local contrast
         lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
         L, A, B = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -202,7 +171,6 @@ class WhiteHudTextDetector:
         gray = cv2.cvtColor(enh, cv2.COLOR_BGR2GRAY)
         gray = cv2.bilateralFilter(gray, d=5, sigmaColor=50, sigmaSpace=50)
 
-        # Adaptive thresholds (emphasize white glyphs)
         block = max(3, self.cfg.adaptive_block | 1)  # odd
         th = cv2.adaptiveThreshold(
             gray, 255,
@@ -211,20 +179,17 @@ class WhiteHudTextDetector:
         )
         th_inv = cv2.bitwise_not(th)
 
-        # Clean speckles
         if self.cfg.open_iters > 0:
             k = cv2.getStructuringElement(cv2.MORPH_RECT, self.cfg.open_ksize)
             th = cv2.morphologyEx(th, cv2.MORPH_OPEN, k, iterations=self.cfg.open_iters)
             th_inv = cv2.morphologyEx(th_inv, cv2.MORPH_OPEN, k, iterations=self.cfg.open_iters)
 
-        # Return as 3-channel for EasyOCR convenience
         to_bgr = lambda g: cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
         candidates = [enh, to_bgr(gray), to_bgr(th), to_bgr(th_inv)]
         meta = ["enh", "gray", "th_bin", "th_inv"]
         return candidates, meta
 
     def _easyocr_text(self, bgr_or_gray3: np.ndarray) -> List[OCRSpan]:
-        # EasyOCR expects RGB or gray
         if len(bgr_or_gray3.shape) == 3 and bgr_or_gray3.shape[2] == 3:
             inp = cv2.cvtColor(bgr_or_gray3, cv2.COLOR_BGR2RGB)
         else:
@@ -252,7 +217,6 @@ class WhiteHudTextDetector:
             if not text or conf < self.cfg.min_conf_keep:
                 continue
 
-            # Keep only allowed pattern to reduce HUD noise
             kept = "".join(self._keep_re.findall(text))
             kept = kept.strip()
             if not kept:
@@ -265,7 +229,7 @@ class WhiteHudTextDetector:
 
             spans.append(OCRSpan(
                 text=kept,
-                conf=float(conf * 100.0),   # align with your 0–100 scale
+                conf=float(conf * 100.0),  
                 bbox=(x, y, w, h),
                 level=5
             ))

@@ -1,4 +1,4 @@
-# src/processing/ocr.py
+
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any, Optional
@@ -6,19 +6,14 @@ import numpy as np
 import cv2
 import re
 
-# ---- Pretrained Deep OCR (EasyOCR) ----
-# pip install easyocr torch torchvision
 try:
     import easyocr
 except Exception:
-    easyocr = None  # clear error is raised if detect() is called
+    easyocr = None  
 
-
-# ---------- Project data models ----------
 
 @dataclass(frozen=True)
 class MultiCropSample:
-    """One cropped sample for a specific ROI/class."""
     roi_name: str
     frame_idx: int
     t_sec: float
@@ -28,7 +23,6 @@ class MultiCropSample:
 
 @dataclass(frozen=True)
 class OCRSpan:
-    """One recognized span (word) with bbox and confidence."""
     text: str
     conf: float                          # 0–100
     bbox: Tuple[int, int, int, int]      # x, y, w, h
@@ -40,7 +34,6 @@ class OCRSpan:
 
 @dataclass(frozen=True)
 class OCRResult:
-    """OCR result aligned with your pipeline."""
     roi_name: str
     frame_idx: int
     t_sec: float
@@ -49,30 +42,23 @@ class OCRResult:
     spans: List[OCRSpan]
     meta: Dict[str, Any]
 
-
-# ---------- Config for pretrained DeepOCR (digits-only) ----------
-
 @dataclass
 class DeepOCRConfig:
-    # Broader orange/red coverage (HUD text is often orange-ish)
     hsv_low1: Tuple[int, int, int] = (0, 60, 60)
     hsv_high1: Tuple[int, int, int] = (25, 255, 255)     # up to orange
     hsv_low2: Tuple[int, int, int] = (160, 60, 60)       # deeper reds
     hsv_high2: Tuple[int, int, int] = (180, 255, 255)
 
-    # Mask cleanup
     close_ksize: Tuple[int, int] = (2, 2)
     close_iters: int = 1
     dilate_ksize: Tuple[int, int] = (2, 2)
     dilate_iters: int = 1
 
-    # Optional upscale (helps tiny HUD text)
     upscale: float = 2.0
 
-    # EasyOCR settings
     languages: Tuple[str, ...] = ("en",)
-    gpu: bool = False                     # set True if you have CUDA
-    allowlist: str = "0123456789"         # digits only
+    gpu: bool = False                     
+    allowlist: str = "0123456789"         
     text_threshold: float = 0.4
     low_text: float = 0.3
     link_threshold: float = 0.4
@@ -80,19 +66,11 @@ class DeepOCRConfig:
     rotation_info: Optional[List[int]] = None  # e.g. [0, 90, 180, 270]
 
     # Post-filtering
-    min_conf_keep: float = 0.35           # a bit lower helps tiny HUD
+    min_conf_keep: float = 0.35           
     sort_left_to_right: bool = True
 
 
 class DeepTextDetector:
-    """
-    Pretrained DeepOCR (EasyOCR) red-digits OCR:
-      1) HSV dual-range red/orange mask -> keep only red/orange regions
-      2) CLAHE contrast boost + optional upscale
-      3) EasyOCR.readtext with digits allowlist
-      4) Strictly keep digits; drop letters (e.g., 'eliminations')
-      5) Gray fallback path if color mask underperforms
-    """
     def __init__(self, cfg: DeepOCRConfig = DeepOCRConfig()):
         self.cfg = cfg
         self._reader: Optional["easyocr.Reader"] = None  # lazy init
@@ -189,7 +167,7 @@ class DeepTextDetector:
     # ---------- Internals ----------
 
     def _easyocr_digits(self, bgr_or_gray: np.ndarray, force_rgb: bool = True):
-        """Run EasyOCR and return (concatenated_digits, spans)."""
+        
         if force_rgb:
             rgb = cv2.cvtColor(bgr_or_gray, cv2.COLOR_BGR2RGB)
         else:
@@ -240,7 +218,6 @@ class DeepTextDetector:
         if self.cfg.sort_left_to_right:
             spans.sort(key=lambda s: s.bbox[0])
 
-        # Concatenate only digits from all spans, then final guard via regex
         all_digits = "".join(s.text for s in spans)
         m = re.findall(r"\d+", all_digits)
         all_digits = "".join(m) if m else ""
@@ -248,10 +225,7 @@ class DeepTextDetector:
         return all_digits, spans
 
     def _preprocess_color_mask(self, bgr: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Keep only red/orange regions for OCR; mild denoise; optional upscale; CLAHE.
-        Returns a BGR image (masked) suitable for EasyOCR.
-        """
+
         meta: Dict[str, Any] = {}
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         low1 = np.array(self.cfg.hsv_low1, dtype=np.uint8)
@@ -270,10 +244,10 @@ class DeepTextDetector:
             kd = cv2.getStructuringElement(cv2.MORPH_RECT, self.cfg.dilate_ksize)
             mask = cv2.dilate(mask, kd, iterations=self.cfg.dilate_iters)
 
-        # Keep only red/orange pixels
+       
         masked = cv2.bitwise_and(bgr, bgr, mask=mask)
 
-        # Optional upscale for tiny HUD text
+        
         if self.cfg.upscale and self.cfg.upscale != 1.0:
             h, w = masked.shape[:2]
             masked = cv2.resize(
@@ -281,7 +255,6 @@ class DeepTextDetector:
                 interpolation=cv2.INTER_CUBIC
             )
 
-        # Mild contrast lift (CLAHE on L channel)
         lab = cv2.cvtColor(masked, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -294,15 +267,11 @@ class DeepTextDetector:
         return masked, meta
 
     def _preprocess_gray_boost(self, bgr: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Gray fallback with gamma + CLAHE. Returns single-channel image.
-        """
         meta: Dict[str, Any] = {}
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-
-        # gamma (0.7) brightens midtones
+        
         gray = np.clip((gray / 255.0) ** 0.7 * 255.0, 0, 255).astype(np.uint8)
-        # local contrast
+
         clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
 

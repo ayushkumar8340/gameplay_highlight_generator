@@ -46,15 +46,10 @@ class HighlightVideoCreator:
             raise ValueError("Timestamp format should be M:SS or H:MM:SS or D:H:MM:SS")
 
     def _collect_commentary_files(self) -> list[Path | None]:
-        """
-        For each timestamp index i, look for line_i.* in audio_dir.
-        Returns a list the same length as timestamps, containing either
-        a Path or None if no file was found for that index.
-        """
         files: list[Path | None] = []
 
         for i in range(len(self.timestamps)):
-            # Support any extension: .wav, .mp3, etc.
+            
             matches = sorted(self.audio_dir.glob(f"line_{i}.*"))
             if matches:
                 files.append(matches[0])
@@ -65,9 +60,6 @@ class HighlightVideoCreator:
         return files
 
     def create(self) -> None:
-        """
-        Build the highlight video and write it to self.output_path.
-        """
         if not self.video_path.exists():
             raise FileNotFoundError(f"Input video not found: {self.video_path}")
 
@@ -135,7 +127,6 @@ class HighlightVideoCreator:
             final.close()
 
         finally:
-            # Clean up resources
             video.close()
             for c in subclips:
                 c.close()

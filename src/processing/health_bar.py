@@ -4,14 +4,7 @@ from typing import Iterable, List, Literal, Optional
 import cv2
 import numpy as np
 
-# ----- Your crop type (for reference) -----
-# @dataclass(frozen=True)
-# class MultiCropSample:
-#     roi_name: str
-#     frame_idx: int
-#     t_sec: float
-#     timecode: str
-#     crop: np.ndarray  # BGR
+
 
 State = Literal["normal_gray", "low_health"]
 Tone  = Literal["light_red", "medium_red", "dark_red", "unknown"]
@@ -28,27 +21,12 @@ class HealthColorDetection:
     red_ratio: float            # fraction of red-ish pixels (0..1)
 
 class HealthBarColorAlertDetector:
-    """
-    Detects 'low health' when the bar turns pink/red (default is gray).
-    Grades severity from color intensity: deeper + darker red => higher severity.
-
-    How it works (summary):
-      1) Convert to HSV and focus on the central band to avoid borders.
-      2) Identify 'red-ish' pixels (dual red hue ranges).
-      3) Compute a redness severity S = mean( sat_norm * (1 - val_norm) ) over red pixels.
-      4) If red fraction < τ_red_frac, it's considered normal_gray; else low_health.
-      5) Map S to tone buckets (light/medium/dark red) and 0..100 severity.
-
-    Tunables below should cover your examples (gray default, pink variant, dark red).
-    """
-
     def __init__(
         self,
-        central_band_frac: float = 0.6,   # analyze middle 60% height to avoid borders
-        min_red_fraction: float = 0.06,   # >= this fraction of red-ish pixels => low health
-        hsv_red1=(np.array([0, 40, 60]),  np.array([10, 255, 255])),   # allow light-pink (sat>=40)
+        central_band_frac: float = 0.6,
+        min_red_fraction: float = 0.06,   
+        hsv_red1=(np.array([0, 40, 60]),  np.array([10, 255, 255])),   
         hsv_red2=(np.array([170, 40, 60]), np.array([180, 255, 255])),
-        # tone cutoffs on S (0..1): light < t1 <= medium < t2 <= dark
         tone_t1: float = 0.28,
         tone_t2: float = 0.55,
         make_debug_vis: bool = False
@@ -72,12 +50,10 @@ class HealthBarColorAlertDetector:
         if crop_bgr.size == 0:
             return 0.0, "normal_gray", "unknown", 0.0, None
 
-        # Light smoothing for thin bars
         blur = cv2.GaussianBlur(crop_bgr, (3,3), 0)
         hsv_full = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         hsv = self._central_band(hsv_full, self.central_band_frac)
 
-        # Red-ish mask including pink (dual range)
         red_mask = cv2.inRange(hsv, *self.hsv_red1) | cv2.inRange(hsv, *self.hsv_red2)
         red_mask_bool = red_mask.astype(bool)
 
@@ -86,12 +62,11 @@ class HealthBarColorAlertDetector:
         red_ratio = red_px / max(1, total_px)
 
         if red_ratio < self.min_red_fraction:
-            # Mostly gray (default)
             severity = 0.0
             tone: Tone = "unknown"
             state: State = "normal_gray"
         else:
-            # Compute redness severity using saturation and value
+           
             S = hsv[...,1].astype(np.float32) / 255.0
             V = hsv[...,2].astype(np.float32) / 255.0
             S_red = S[red_mask_bool]
@@ -101,11 +76,11 @@ class HealthBarColorAlertDetector:
                 tone = "unknown"
                 state = "normal_gray"
             else:
-                # Deeper red => higher S, lower V
+                
                 score = (S_red) * (1.0 - V_red)
                 S_mean = float(score.mean())
                 severity = float(np.clip(100.0 * S_mean, 0.0, 100.0))
-                # tone buckets
+                
                 if S_mean < self.tone_t1:
                     tone = "light_red"
                 elif S_mean < self.tone_t2:
@@ -119,14 +94,12 @@ class HealthBarColorAlertDetector:
             vis = crop_bgr.copy()
             band = self._central_band(vis, self.central_band_frac)
             overlay = band.copy()
-            # visualize red mask translucently
             overlay[red_mask_bool] = (0, 0, 255)  # BGR: mark red area
             cv2.addWeighted(overlay, 0.35, band, 0.65, 0, band)
             debug_vis = vis
 
         return severity, state, tone, red_ratio, debug_vis
 
-    # ---- public API ----
     def detect_one(self, sample) -> HealthColorDetection:
         sev, state, tone, red_ratio, _ = self._analyze(sample.crop)
         return HealthColorDetection(

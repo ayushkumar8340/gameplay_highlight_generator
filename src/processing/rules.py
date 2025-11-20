@@ -1,4 +1,3 @@
-# --- src/processing/rules.py ---
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
@@ -8,48 +7,33 @@ import time
 
 @dataclass(frozen=True)
 class RuleEvent:
-    """One key moment emitted by the rules engine."""
     frame_idx: int
     t_sec: float
     timecode: str
-    type: str                   # 'kill_while_low_health' | 'false_kill_while_low_health' | 'award_word_detected'
+    type: str                   
     payload: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class RulesConfig:
-    # kill acceptance
     max_kill_jump: int = 3
     min_conf_accept: float = 0.45
     reset_if_zero_after_s: float = 30.0
 
-    # award words (case-insensitive exact match)
     award_words: tuple = ("streak", "treak", "armor", "armor breaker", "elemin", "eleminator","ele","dominator","dom","do")
 
 
 class HUDRulesEngine:
-    """
-    Pure rules engine that:
-      - stabilizes kill count from noisy OCR
-      - flags 'kill while low health' and 'false kill while low health'
-      - flags exact award word hits (case-insensitive) among {streak, treak, armor, armor breaker}
-
-    Public API: process(...) -> List[RuleEvent]
-    State kept internally: last accepted kill count + last accept time.
-    """
-
     def __init__(self, cfg: Optional[RulesConfig] = None) -> None:
         self.cfg = cfg or RulesConfig()
         self.last_good_kills: Optional[int] = None
         self.last_accept_t: Optional[float] = None  # seconds timeline of the video
 
-    # ---------- helpers ----------
     @staticmethod
     def _extract_first_int(s: str) -> Optional[int]:
         m = re.search(r"\d+", s or "")
         return int(m.group(0)) if m else None
 
-    # ---------- core ----------
     def process(
         self,
         *,
@@ -63,15 +47,7 @@ class HUDRulesEngine:
         health_severity: float,
         awards_text: str,
     ) -> List[RuleEvent]:
-        """
-        Feed one frame worth of measurements. Returns a list of RuleEvent emitted for this frame.
-        - kills_raw_text: raw OCR text from kill counter region
-        - kills_avg_conf: average confidence across spans for kill OCR
-        - health_state: detector's state string (e.g., "low_health" or "ok")
-        - health_low: True if low health
-        - health_severity: numeric severity (0..100 if you use that scale)
-        - awards_text: raw OCR text from the HUD awards region
-        """
+
         events: List[RuleEvent] = []
 
         # ----- Kills acceptance (stabilization) -----
@@ -99,11 +75,10 @@ class HUDRulesEngine:
             if prev is not None and kills_int_read is not None and kills_int_read > prev:
                 kill_event = True
         else:
-            # do not increment accepted kills; still treat as a possible kill for correlation
+           
             if kills_int_read is not None:
                 false_kill_event = True
 
-        # ----- Correlate with health -----
         if kill_event and health_low:
             events.append(RuleEvent(
                 frame_idx=frame_idx, t_sec=t_sec, timecode=timecode,

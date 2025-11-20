@@ -63,7 +63,7 @@ def run_entire_pipeline(video_path, log, set_progress, ui_ref, update_image):
         hsv_low2=(170, 80, 70), hsv_high2=(180, 255, 255),
         close_ksize=(2, 2), close_iters=1,
         dilate_ksize=(2, 2), dilate_iters=1,
-        upscale=2.0, languages=("en",), gpu=False,
+        upscale=2.0, languages=("en",), gpu=True,
         allowlist="0123456789",
         text_threshold=0.4, low_text=0.3, link_threshold=0.4,
         min_conf_keep=0.40, sort_left_to_right=True,
@@ -141,7 +141,6 @@ def run_entire_pipeline(video_path, log, set_progress, ui_ref, update_image):
                 res = hud.detect(s)
                 awards_text = res.all_text.strip()
 
-        # --- run rules for this frame ---
         if frame_idx is not None:
             events = rules.process(
                 frame_idx=frame_idx,
@@ -176,8 +175,6 @@ def run_entire_pipeline(video_path, log, set_progress, ui_ref, update_image):
                 if key == ord('q'):
                     break
             
-            
-            # --- console log of detected events ---
             for ev in events:
                 full = cropper.get_original_frame_by_index(frame_idx)
                 frame_vis = full.frame.copy()
@@ -255,5 +252,4 @@ def run_entire_pipeline(video_path, log, set_progress, ui_ref, update_image):
     set_progress(100)
     log("✔ DONE!")
 
-    # -----------------------------------------------------------
     return OUT_PATH
