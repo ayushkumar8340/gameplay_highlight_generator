@@ -2,21 +2,21 @@ name: gameplay-highlights
 channels:
   - conda-forge
   - defaults
+
 dependencies:
-  - python=3.11
+  - python=3.10
   - pip
+  - numpy
+  - pyyaml
+  - pillow
+  - tqdm
+  - rich
+  - scipy
 
-  # System/compiled deps (fast & reliable via conda)
-  - ffmpeg            # video I/O & rendering
-  - libsndfile        # needed by librosa for audio
-  - tesseract         # OCR engine (optional but recommended)
-  - leptonica         # tesseract dependency
-
-  # If you're on Linux and OpenCV UI doesn't open, you may also need one of:
-  # - xorg-libx11
-  # - gtk3
-  # (Install later only if needed)
-  
-  # Leave Python packages to pip; just install pip itself:
   - pip:
-      - -r requirements.txt
+      - opencv-python
+      - moviepy
+      - pydub
+      - torch
+      - torchaudio
+      - TTS

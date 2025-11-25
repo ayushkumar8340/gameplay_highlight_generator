@@ -69,6 +69,60 @@ For every detected highlight, the pipeline:
 Each subsystem can be run and tested individually using scripts in the `tests/` folder.
 
 
+## Technologies Used
+
+### **Deep OCR Pipeline**
+Used for robust kill-counter and HUD text extraction.  
+Handles:
+- Motion blur
+- Color variance
+- Low-contrast gameplay
+- Real-time HUD tracking
+
+### **Computer Vision (OpenCV)**
+Used for:
+- ROI cropping
+- HUD region detection
+- Masking and thresholding
+- Health bar extraction (HSV-based)
+
+### **Large Language Models (ChatGPT)**
+Used for:
+- Dynamically generating commentary lines
+- Caption and description generation
+- Context-aware event labeling
+
+### **Text-to-Speech (TTS) Engines**
+Offline or online TTS used to generate:
+- Commentary voice lines
+- Narration for highlight clips
+
+(Engine Used:VITS)
+
+### **MoviePy**
+Handles all video/audio operations:
+- Cutting highlight segments
+- Adding commentary audio
+- Transitions, fades, resizing
+- Merging clips into the final reel
+
+### **Python Backend**
+The entire pipeline is implemented in Python, using:
+- `moviepy`
+- `opencv-python`
+- `numpy`
+- `yaml`
+- `dataclasses`
+- `threading` (UI pipeline execution)
+
+### **Modular Testing Framework**
+Every module (OCR, rules, awards, health, editing) can be validated individually using scripts in the `tests/` folder.
+
+
+**Note:**  All code in this project was written by me with assistance from LLM tools. No code was directly copied from external sources. The implementation uses multiple libraries listed above.
+
+
+
 ## Installation
 
 ```bash
@@ -96,10 +150,24 @@ Use the main script located inside tests/main.py:
 PYTHONPATH=src python -m tests.main
 ```
 ## Results
-![Results](./assets/res_1.png)
-![My Image](assets/res_2.png)
-![My Image](assets/res_3.png)
-![My Image](assets/res_4.png)
+![Accuracy](./assets/res_1.png)
+![Stats](assets/res_2.png)
+![Stats](assets/res_3.png)
+![Detections](assets/res_4.png)
+
+
+## UI
+
+![UI](assets/res_4.png)
+
+
+
+## Video Link
+[Watch Presentation Video](https://youtu.be/xj7CbL3y01I)
+[Watch Final Results](https://youtu.be/YOVRYjvCWiU)
+[Full Gameplay Video](https://youtu.be/PC3lcXDZ-2I)
+
+
 
 
 
