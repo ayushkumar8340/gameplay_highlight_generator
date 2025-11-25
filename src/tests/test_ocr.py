@@ -15,7 +15,7 @@ from processing.ocr import DeepTextDetector, DeepOCRConfig, MultiCropSample
 
 REPO_ROOT = Path(__file__).resolve().parents[1].parent
 
-VIDEO = REPO_ROOT / "vids" / "1.MP4"
+VIDEO = REPO_ROOT / "vids" / "1.mp4"
 YAML  = REPO_ROOT / "rois" / "rois.yaml"   # change if your file name differs
 
 # Only this ROI name will be OCR'd (must match YAML 'name')

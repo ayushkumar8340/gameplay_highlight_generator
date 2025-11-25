@@ -20,7 +20,7 @@ class RulesConfig:
     min_conf_accept: float = 0.45
     reset_if_zero_after_s: float = 30.0
 
-    award_words: tuple = ("streak", "treak", "armor", "armor breaker", "elemin", "eleminator","ele","dominator","dom","do")
+    award_words: tuple = ("streak", "treak", "armor", "armor breaker", "elemin", "eleminator","ele","dominator","dom","do","SniperMastery")
 
 
 class HUDRulesEngine:

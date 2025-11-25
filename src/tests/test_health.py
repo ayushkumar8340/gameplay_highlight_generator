@@ -8,7 +8,7 @@ from processing.health_bar import HealthBarColorAlertDetector
 
 REPO_ROOT = Path(__file__).resolve().parents[1].parent
 
-VIDEO = REPO_ROOT / "vids" / "1.MP4"
+VIDEO = REPO_ROOT / "vids" / "1.mp4"
 YAML  = REPO_ROOT / "rois" / "rois.yaml"   # change if your file name differs
 
 # Set this to your health ROI name from YAML (e.g., "nhealth")
